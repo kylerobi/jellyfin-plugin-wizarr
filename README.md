@@ -47,9 +47,17 @@ In Wizarr's admin UI (reached from your LAN, or temporarily through an SSH tunne
 2. Set that server's **External URL** to your public Jellyfin address, so the sign-up wizard shows new users the right address.
 3. Create an API key under **Settings → API Keys**.
 
-## 2. Build
+## 2. Get the plugin
 
-Needs only Docker:
+**Download:** grab `wizarr-invites_x.y.z.0.zip` from the [Releases](../../releases) page. Every push also builds a zip, which you can find under the **Actions** tab → latest run → *Artifacts*.
+
+To publish a new release, push a version tag:
+
+```sh
+git tag v1.0.1 && git push origin v1.0.1
+```
+
+**Or build it yourself**, which needs only Docker:
 
 ```sh
 ./build.sh
@@ -61,13 +69,22 @@ Targets **Jellyfin 10.11** (.NET 9). For 10.10, edit the `.csproj`: change `net9
 
 ## 3. Install
 
+From a release zip (it already contains the `WizarrInvites_x.y.z.0` folder):
+
+```sh
+unzip wizarr-invites_*.zip -d /path/to/jellyfin/config/plugins/
+docker restart jellyfin
+```
+
+From your own build:
+
 ```sh
 mkdir -p /path/to/jellyfin/config/plugins/WizarrInvites_1.0.0.0
 cp dist/Jellyfin.Plugin.Wizarr.dll /path/to/jellyfin/config/plugins/WizarrInvites_1.0.0.0/
 docker restart jellyfin
 ```
 
-If you installed the earlier version of this plugin, delete its folder first.
+Keep only one `WizarrInvites_*` folder. Delete the old one when you upgrade.
 
 ## 4. Configure
 
