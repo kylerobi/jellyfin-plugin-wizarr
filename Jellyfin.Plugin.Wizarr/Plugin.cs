@@ -27,6 +27,34 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 
     public override Guid Id => Guid.Parse(PluginGuid);
 
+    /// <summary>
+    /// The API key is never sent to the browser, so a saved config from the dashboard arrives without it.
+    /// Keep the stored key unless the dashboard sent a new one or asked to clear it.
+    /// </summary>
+    public override void UpdateConfiguration(BasePluginConfiguration configuration)
+    {
+        if (configuration is PluginConfiguration incoming)
+        {
+            if (incoming.ClearApiKey)
+            {
+                incoming.ApiKey = string.Empty;
+            }
+            else if (!string.IsNullOrWhiteSpace(incoming.NewApiKey))
+            {
+                incoming.ApiKey = incoming.NewApiKey.Trim();
+            }
+            else
+            {
+                incoming.ApiKey = Configuration.ApiKey;
+            }
+
+            incoming.NewApiKey = null;
+            incoming.ClearApiKey = false;
+        }
+
+        base.UpdateConfiguration(configuration);
+    }
+
     public IEnumerable<PluginPageInfo> GetPages()
     {
         return new[]

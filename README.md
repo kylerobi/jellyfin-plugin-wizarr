@@ -94,9 +94,19 @@ Dashboard → Plugins → **Wizarr Invites**:
 |---|---|
 | Wizarr internal URL | `http://wizarr:5690` |
 | Jellyfin public URL (optional) | `https://jellyfin.example.com`, used for share links |
-| Wizarr API key | from Wizarr → Settings → API Keys (or leave blank and use `WIZARR_API_KEY`) |
+| Separate invite address (optional, recommended) | `https://invite.example.com`, see below |
+| Wizarr API key | from Wizarr → Settings → API Keys. **Recommended:** leave blank and set `WIZARR_API_KEY` on the Jellyfin container, so the key isn't stored in Jellyfin's config files |
 
 Press **Save**, then **Test connection**. Then open `https://jellyfin.example.com/invite` from outside your network to check the code page.
+
+### Recommended: a separate invite address
+
+By default Wizarr's pages are served on your Jellyfin address, so they share a browser origin with the Jellyfin web app, which keeps users' logins in browser storage. A bug in Wizarr's public pages could then reach those logins.
+
+To isolate them, point a second hostname (e.g. `invite.example.com`) at the same Jellyfin server and enter it as **Separate invite address**. The plugin then serves `/invite` only on that hostname (other hosts get a 404 that names the right address), share links use it, and Wizarr builds its links from it.
+
+- Your reverse proxy must pass the original `Host` header to Jellyfin (nginx: `proxy_set_header Host $host;`; Caddy and Traefik do this by default).
+- Don't sign in to Jellyfin on the invite address. The isolation comes from no Jellyfin logins being stored for that origin.
 
 ## 5. (Optional) Link it from the Jellyfin login screen
 
@@ -120,10 +130,14 @@ If Jellyfin uses a base URL (e.g. `/jellyfin`), use `/jellyfin/invite`.
 
 ## How it works
 
-Jellyfin forwards each allowed request to Wizarr and adds `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Forwarded-For` and `X-Forwarded-Prefix: /invite` headers. With `TRUST_PROXY_HEADERS=true`, Wizarr then builds all its links under `/invite` and rate-limits by the visitor's real IP. As a safety net, the plugin also:
+Jellyfin forwards each allowed request to Wizarr and adds `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Forwarded-For` and `X-Forwarded-Prefix: /invite` headers. The host and scheme come from the configured invite or Jellyfin public address when one is set, not from the visitor's `Host` header. With `TRUST_PROXY_HEADERS=true`, Wizarr then builds all its links under `/invite` and rate-limits by the visitor's real IP. As a safety net, the plugin also:
 - rewrites any root-relative links Wizarr hard-codes,
 - rewrites redirect `Location` headers,
-- scopes Wizarr's cookies to `/invite`.
+- scopes Wizarr's cookies to `/invite` and renames them with a `wizarr-` prefix; only those cookies are sent back to Wizarr, so cookies set by other apps on your domain never reach it,
+- passes only an approved list of Wizarr's response headers (so Wizarr can't set HSTS, CORS or `Clear-Site-Data` on your Jellyfin address), and adds `X-Content-Type-Options: nosniff` and `Referrer-Policy: same-origin` if Wizarr doesn't,
+- refuses paths with percent-encoding, `.`/`..` segments or empty segments, and blocks Wizarr's admin-only `/wizard/bundle-preview`.
+
+The saved API key is never sent to the browser; the dashboard only sees whether one is saved.
 
 Jellyfin login tokens are never forwarded to Wizarr.
 

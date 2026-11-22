@@ -14,26 +14,42 @@ namespace Jellyfin.Plugin.Wizarr.Api;
 /// </summary>
 [Route("invite")]
 [AllowAnonymous]
-public class InviteProxyController : ControllerBase
+public partial class InviteProxyController : ControllerBase
 {
     private const string Segment = "/invite";
 
-    // Browser headers that are never forwarded to Wizarr (hop-by-hop, Jellyfin credentials, spoofable proxy headers).
+    /// <summary>
+    /// Wizarr's cookies are renamed with this prefix on the way out, and only cookies carrying it are sent back to
+    /// Wizarr (with the prefix removed). Cookies other apps set on the Jellyfin address never reach Wizarr.
+    /// </summary>
+    internal const string CookiePrefix = "wizarr-";
+
+    // Browser headers that are never forwarded to Wizarr (hop-by-hop, Jellyfin credentials, spoofable proxy headers,
+    // and Cookie, which is filtered separately).
     private static readonly HashSet<string> SkipRequestHeaders = new(StringComparer.OrdinalIgnoreCase)
     {
         "Host", "Connection", "Keep-Alive", "Proxy-Authorization", "Proxy-Connection", "TE", "Trailer",
-        "Transfer-Encoding", "Upgrade", "Accept-Encoding", "Content-Length", "Content-Type",
+        "Transfer-Encoding", "Upgrade", "Accept-Encoding", "Content-Length", "Content-Type", "Cookie",
         "Authorization", "X-Emby-Authorization", "X-Emby-Token", "X-MediaBrowser-Token",
         "Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto",
         "X-Forwarded-Prefix", "X-Forwarded-Port", "X-Real-IP"
     };
 
-    // Wizarr response headers that are dropped or rewritten before reaching the browser.
-    private static readonly HashSet<string> SkipResponseHeaders = new(StringComparer.OrdinalIgnoreCase)
+    // The only Wizarr response headers passed to the browser. Anything else (HSTS, Clear-Site-Data, CORS, ...) is
+    // dropped so Wizarr can't change how the browser treats the whole Jellyfin address.
+    // Location, Set-Cookie and the htmx URL headers are handled separately.
+    private static readonly HashSet<string> AllowedResponseHeaders = new(StringComparer.OrdinalIgnoreCase)
     {
-        "Connection", "Keep-Alive", "Transfer-Encoding", "Upgrade", "Trailer", "Proxy-Authenticate",
-        "Content-Length", "Server", "Set-Cookie", "Location"
+        "Content-Type", "Content-Encoding", "Content-Language", "Content-Disposition", "Content-Range",
+        "Accept-Ranges", "Cache-Control", "Expires", "Pragma", "Last-Modified", "ETag", "Vary", "Retry-After",
+        "Content-Security-Policy", "X-Frame-Options", "X-Content-Type-Options", "Referrer-Policy",
+        "Permissions-Policy", "Cross-Origin-Opener-Policy", "Cross-Origin-Resource-Policy",
+        "HX-Trigger", "HX-Trigger-After-Settle", "HX-Trigger-After-Swap", "HX-Refresh", "HX-Reswap", "HX-Retarget",
+        "HX-Reselect"
     };
+
+    // htmx response headers that carry a URL and get the same rewriting as Location.
+    private static readonly string[] HtmxUrlHeaders = { "HX-Redirect", "HX-Location", "HX-Push-Url", "HX-Replace-Url" };
 
     private readonly ILogger<InviteProxyController> _logger;
 
@@ -49,6 +65,25 @@ public class InviteProxyController : ControllerBase
         var pathBase = Request.PathBase.ToUriComponent().TrimEnd('/');
         var prefix = pathBase + Segment;                      // e.g. /invite or /jellyfin/invite
         var rest = encodedPath.Length > Segment.Length ? encodedPath[Segment.Length..] : string.Empty;
+
+        // With a dedicated invite address configured, refuse to serve Wizarr on any other host, so its pages can
+        // never run on the origin where the Jellyfin web app keeps its logins.
+        var invitePublic = WizarrConnection.PublicUri(WizarrConnection.Config.InvitePublicUrl);
+        if (invitePublic is not null
+            && !string.Equals(Request.Host.Host, invitePublic.Host, StringComparison.OrdinalIgnoreCase))
+        {
+            await WriteText(
+                StatusCodes.Status404NotFound,
+                "Invites are served at " + invitePublic.GetLeftPart(UriPartial.Authority) + prefix,
+                cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (!IsSafePath(rest))
+        {
+            Response.StatusCode = StatusCodes.Status404NotFound;
+            return;
+        }
 
         // Cookies are scoped to the lowercase path, so normalise /Invite → /invite.
         if (!encodedPath.StartsWith(Segment, StringComparison.Ordinal))
@@ -77,7 +112,7 @@ public class InviteProxyController : ControllerBase
         }
 
         var upstream = new Uri(baseUri, rest.TrimStart('/') + Request.QueryString.Value);
-        using var request = BuildUpstreamRequest(upstream, prefix);
+        using var request = BuildUpstreamRequest(upstream, prefix, invitePublic);
 
         HttpResponseMessage response;
         try
@@ -100,22 +135,55 @@ public class InviteProxyController : ControllerBase
     }
 
     /// <summary>
+    /// Only plain path characters are allowed: no percent-encoding (so no encoded slashes, backslashes or dots that
+    /// Wizarr would decode differently from this check), no "." or ".." segments and no empty segments.
+    /// </summary>
+    internal static bool IsSafePath(string rest)
+    {
+        if (!SafePathChars().IsMatch(rest))
+        {
+            return false;
+        }
+
+        var segments = rest.Split('/');
+        for (var i = 0; i < segments.Length; i++)
+        {
+            var s = segments[i];
+            if (s is "." or "..")
+            {
+                return false;
+            }
+
+            // Empty segments only at the very start ("/x") or end ("/x/"), never "//".
+            if (s.Length == 0 && i != 0 && i != segments.Length - 1)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// The invitee-facing parts of Wizarr. Everything else (admin, login, setup, settings, api, webauthn…) is refused.
     /// </summary>
-    private static bool IsPublicWizarrPath(string rest)
+    internal static bool IsPublicWizarrPath(string rest)
     {
         var p = rest.TrimStart('/');
-        var first = p.Split('/', 2)[0].ToLowerInvariant();
+        var parts = p.Split('/', 3);
+        var first = parts[0].ToLowerInvariant();
         return first switch
         {
-            "j" or "join" or "wizard" or "static" or "reset" or "favicon.ico" or "cinema-posters" or "image-proxy" => true,
+            // /wizard/bundle-preview is Wizarr's admin preview of custom wizard bundles.
+            "wizard" => !(parts.Length > 1 && parts[1].Equals("bundle-preview", StringComparison.OrdinalIgnoreCase)),
+            "j" or "join" or "static" or "reset" or "favicon.ico" or "cinema-posters" or "image-proxy" => true,
             "invitation" => p.Equals("invitation/process", StringComparison.OrdinalIgnoreCase),
             "plex" => p.Equals("plex/callback", StringComparison.OrdinalIgnoreCase),
             _ => false
         };
     }
 
-    private HttpRequestMessage BuildUpstreamRequest(Uri upstream, string prefix)
+    private HttpRequestMessage BuildUpstreamRequest(Uri upstream, string prefix, Uri? invitePublic)
     {
         var request = new HttpRequestMessage(new HttpMethod(Request.Method), upstream);
 
@@ -127,6 +195,12 @@ public class InviteProxyController : ControllerBase
             }
 
             request.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray());
+        }
+
+        var cookie = FilterRequestCookies(Request.Headers.Cookie.ToArray());
+        if (cookie.Length > 0)
+        {
+            request.Headers.TryAddWithoutValidation("Cookie", cookie);
         }
 
         var hasBody = Request.ContentLength > 0
@@ -153,8 +227,11 @@ public class InviteProxyController : ControllerBase
             request.Headers.TryAddWithoutValidation("X-Forwarded-For", clientIp);
         }
 
-        request.Headers.TryAddWithoutValidation("X-Forwarded-Proto", Request.Scheme);
-        request.Headers.TryAddWithoutValidation("X-Forwarded-Host", Request.Host.Value);
+        // Prefer the configured public address over the visitor's Host header, so a forged Host can't make
+        // Wizarr build links that point somewhere else.
+        var publicUri = invitePublic ?? WizarrConnection.PublicUri(WizarrConnection.Config.JellyfinPublicUrl);
+        request.Headers.TryAddWithoutValidation("X-Forwarded-Proto", publicUri?.Scheme ?? Request.Scheme);
+        request.Headers.TryAddWithoutValidation("X-Forwarded-Host", publicUri?.Authority ?? Request.Host.Value);
         request.Headers.TryAddWithoutValidation("X-Forwarded-Prefix", prefix);
 
         return request;
@@ -166,7 +243,7 @@ public class InviteProxyController : ControllerBase
 
         foreach (var header in response.Headers.Concat(response.Content.Headers))
         {
-            if (!SkipResponseHeaders.Contains(header.Key))
+            if (AllowedResponseHeaders.Contains(header.Key))
             {
                 Response.Headers[header.Key] = header.Value.ToArray();
             }
@@ -177,9 +254,31 @@ public class InviteProxyController : ControllerBase
             Response.Headers.Location = RewriteLocation(locations.First(), prefix, baseUri);
         }
 
+        foreach (var name in HtmxUrlHeaders)
+        {
+            if (response.Headers.TryGetValues(name, out var values))
+            {
+                var value = values.First();
+                Response.Headers[name] = value.StartsWith('/') || value.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+                    ? RewriteLocation(value, prefix, baseUri)
+                    : value;  // "false", or HX-Location's JSON form
+            }
+        }
+
         if (response.Headers.TryGetValues("Set-Cookie", out var cookies))
         {
             Response.Headers.SetCookie = cookies.Select(c => RewriteCookie(c, prefix)).ToArray();
+        }
+
+        // Defaults when Wizarr doesn't set them: no MIME sniffing, and don't leak /j/CODE URLs to other sites via Referer.
+        if (!Response.Headers.ContainsKey("X-Content-Type-Options"))
+        {
+            Response.Headers["X-Content-Type-Options"] = "nosniff";
+        }
+
+        if (!Response.Headers.ContainsKey("Referrer-Policy"))
+        {
+            Response.Headers["Referrer-Policy"] = "same-origin";
         }
 
         if (HttpMethods.IsHead(Request.Method))
@@ -188,7 +287,7 @@ public class InviteProxyController : ControllerBase
         }
 
         var mediaType = response.Content.Headers.ContentType?.MediaType ?? string.Empty;
-        if (IsRewritable(mediaType))
+        if (IsRewritable(mediaType) && response.Content.Headers.ContentEncoding.Count == 0)
         {
             var text = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             var bytes = Encoding.UTF8.GetBytes(RewriteBody(text, prefix));
@@ -265,9 +364,13 @@ public class InviteProxyController : ControllerBase
         return location;
     }
 
+    /// <summary>
+    /// Renames the cookie with <see cref="CookiePrefix"/>, drops any Domain and scopes its Path under the prefix.
+    /// </summary>
     internal static string RewriteCookie(string cookie, string prefix)
     {
         const RegexOptions Opts = RegexOptions.IgnoreCase | RegexOptions.CultureInvariant;
+        cookie = CookiePrefix + cookie.TrimStart();
         cookie = Regex.Replace(cookie, @";\s*Domain=[^;]*", string.Empty, Opts);
 
         if (!Regex.IsMatch(cookie, @";\s*Path=", Opts))
@@ -287,10 +390,40 @@ public class InviteProxyController : ControllerBase
         }, Opts);
     }
 
+    /// <summary>
+    /// Keeps only cookies Wizarr set through this proxy (those named with <see cref="CookiePrefix"/>) and
+    /// restores their original names.
+    /// </summary>
+    internal static string FilterRequestCookies(IEnumerable<string?> cookieHeaders)
+    {
+        var kept = new List<string>();
+        foreach (var header in cookieHeaders)
+        {
+            if (string.IsNullOrEmpty(header))
+            {
+                continue;
+            }
+
+            foreach (var part in header.Split(';'))
+            {
+                var pair = part.Trim();
+                if (pair.Length > CookiePrefix.Length && pair.StartsWith(CookiePrefix, StringComparison.Ordinal))
+                {
+                    kept.Add(pair[CookiePrefix.Length..]);
+                }
+            }
+        }
+
+        return string.Join("; ", kept);
+    }
+
     private async Task WriteText(int status, string message, CancellationToken ct)
     {
         Response.StatusCode = status;
         Response.ContentType = "text/plain; charset=utf-8";
         await Response.WriteAsync(message, ct).ConfigureAwait(false);
     }
+
+    [GeneratedRegex("^[A-Za-z0-9._~@+=,/-]*$")]
+    private static partial Regex SafePathChars();
 }
