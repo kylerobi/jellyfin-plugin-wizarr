@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Wizarr Invites</title>
+</head>
+<body>
+<div id="WizarrConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-select,emby-checkbox">
+    <div data-role="content">
+        <div class="content-primary">
+            <style>
+                #WizarrConfigPage .wz-table { width: 100%; border-collapse: collapse; margin-top: 1em; }
+                #WizarrConfigPage .wz-table th, #WizarrConfigPage .wz-table td { text-align: left; padding: .5em .4em; border-bottom: 1px solid rgba(255,255,255,.08); vertical-align: middle; }
+                #WizarrConfigPage .wz-link { width: 100%; min-width: 14em; background: transparent; color: inherit; border: 1px solid rgba(255,255,255,.15); border-radius: 4px; padding: .35em .5em; font-family: monospace; }
+                #WizarrConfigPage .wz-status-pending { color: #52b54b; }
+                #WizarrConfigPage .wz-status-used { color: #999; }
+                #WizarrConfigPage .wz-status-expired { color: #cc3333; }
+                #WizarrConfigPage .wz-libs label { display: inline-flex; align-items: center; gap: .35em; margin: 0 1.2em .5em 0; }
+                #WizarrConfigPage .wz-msg { margin: .8em 0; min-height: 1.2em; }
+                #WizarrConfigPage .wz-row-btn { padding: .3em .8em; margin: 0 .2em; }
+            </style>
+
+            <h2 class="sectionTitle">Connection</h2>
+            <form id="WizarrConfigForm">
+                <div class="inputContainer">
+                    <input is="emby-input" type="url" id="WizarrInternalUrl" label="Wizarr internal URL" />
+                    <div class="fieldDescription">How Jellyfin reaches Wizarr on your private Docker network, e.g. http://wizarr:5690. Wizarr doesn't need to be exposed to the internet: invitees sign up at <strong id="JoinUrlHint">/invite</strong> on your Jellyfin address.</div>
+                </div>
+                <div class="inputContainer">
+                    <input is="emby-input" type="url" id="JellyfinPublicUrl" label="Jellyfin public URL (optional)" />
+                    <div class="fieldDescription">Used to build share links, e.g. https://jellyfin.example.com. Leave blank to use the address you're on now.</div>
+                </div>
+                <div class="inputContainer">
+                    <input is="emby-input" type="password" id="ApiKey" label="Wizarr API key" autocomplete="new-password" />
+                    <div class="fieldDescription" id="ApiKeyHint">Create one in Wizarr under Settings → API Keys. Leave blank to keep the saved key, or to use the WIZARR_API_KEY environment variable on the Jellyfin container.</div>
+                </div>
+                <label class="checkboxContainer">
+                    <input is="emby-checkbox" type="checkbox" id="ClearApiKey" />
+                    <span>Remove the saved API key</span>
+                </label>
+                <div>
+                    <button is="emby-button" type="submit" class="raised button-submit block emby-button"><span>Save</span></button>
+                    <button is="emby-button" type="button" id="TestBtn" class="raised block emby-button"><span>Test connection</span></button>
+                </div>
+                <div class="wz-msg fieldDescription" id="TestMsg"></div>
+            </form>
+
+            <h2 class="sectionTitle">Create invite</h2>
+            <form id="WizarrCreateForm">
+                <div class="selectContainer">
+                    <select is="emby-select" id="ServerId" label="Wizarr server"></select>
+                </div>
+                <div class="selectContainer">
+                    <select is="emby-select" id="ExpiresIn" label="Invite link expires after">
+                        <option value="1">1 day</option>
+                        <option value="7" selected>7 days</option>
+                        <option value="30">30 days</option>
+                        <option value="">Never</option>
+                    </select>
+                </div>
+                <div class="inputContainer">
+                    <input is="emby-input" type="number" min="1" id="DurationDays" label="Account access length in days (optional)" />
+                    <div class="fieldDescription">Leave blank for unlimited access.</div>
+                </div>
+                <div class="verticalSection">
+                    <h3 class="checkboxListLabel">Libraries</h3>
+                    <div class="fieldDescription">Leave all unticked to use Wizarr's default libraries.</div>
+                    <div id="LibraryList" class="wz-libs"></div>
+                </div>
+                <label class="checkboxContainer">
+                    <input is="emby-checkbox" type="checkbox" id="AllowDownloads" />
+                    <span>Allow downloads</span>
+                </label>
+                <label class="checkboxContainer">
+                    <input is="emby-checkbox" type="checkbox" id="AllowLiveTv" />
+                    <span>Allow Live TV</span>
+                </label>
+                <button is="emby-button" type="submit" class="raised button-submit block emby-button"><span>Create invite</span></button>
+                <div class="wz-msg fieldDescription" id="CreateMsg"></div>
+            </form>
+
+            <h2 class="sectionTitle">Invites</h2>
+            <label class="checkboxContainer">
+                <input is="emby-checkbox" type="checkbox" id="ShowAll" />
+                <span>Show used and expired invites</span>
+            </label>
+            <button is="emby-button" type="button" id="RefreshBtn" class="raised emby-button"><span>Refresh</span></button>
+            <div id="InviteTable"></div>
+        </div>
+    </div>
+
+    <script type="text/javascript">
+        (function () {
+            var pluginId = "0cd6f4b8-dc11-478f-b7e9-0d10cd1aeee9";
+            var page = document.querySelector('#WizarrConfigPage');
+            var currentConfig = null;
+            var allLibraries = [];
+            var invites = [];
+
+            function $(id) { return page.querySelector('#' + id); }
+
+            function esc(s) {
+                return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+                    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+                });
+            }
+
+            function api(method, path, body) {
+                var opts = { type: method, url: ApiClient.getUrl(path), dataType: 'json' };
+                if (body !== undefined) {
+                    opts.data = JSON.stringify(body);
+                    opts.contentType = 'application/json';
+                }
+                return ApiClient.ajax(opts);
+            }
+
+            function errorText(err, fallback) {
+                if (err && typeof err.json === 'function') {
+                    return err.json().then(function (j) { return (j && j.error) || fallback; }, function () { return fallback; });
+                }
+                return Promise.resolve(fallback);
+            }
+
+            function publicRoot() {
+                var base = (currentConfig && currentConfig.JellyfinPublicUrl) || '';
+                return base ? base.replace(/\/+$/, '') + '/invite' : ApiClient.getUrl('invite');
+            }
+
+            function shareBase() {
+                return publicRoot() + '/j/';
+            }
+
+            function loadConfig() {
+                Dashboard.showLoadingMsg();
+                return ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+                    currentConfig = config;
+                    $('WizarrInternalUrl').value = config.WizarrInternalUrl || '';
+                    $('JellyfinPublicUrl').value = config.JellyfinPublicUrl || '';
+                    $('ApiKey').value = '';
+                    $('ApiKey').setAttribute('placeholder', config.ApiKey ? '•••••••• (saved)' : '');
+                    $('ClearApiKey').checked = false;
+                    $('JoinUrlHint').textContent = publicRoot();
+                    Dashboard.hideLoadingMsg();
+                }, function () { Dashboard.hideLoadingMsg(); });
+            }
+
+            function loadServers() {
+                return api('GET', 'InviteAdmin/Servers').then(function (res) {
+                    var servers = (res && res.servers) || [];
+                    var sel = $('ServerId');
+                    sel.innerHTML = servers.map(function (s) {
+                        return '<option value="' + esc(s.id) + '">' + esc(s.name) + ' (' + esc(s.server_type) + ')</option>';
+                    }).join('');
+                    var preferred = servers.filter(function (s) { return s.id === (currentConfig && currentConfig.DefaultServerId); })[0]
+                        || servers.filter(function (s) { return String(s.server_type).toLowerCase() === 'jellyfin'; })[0];
+                    if (preferred) { sel.value = String(preferred.id); }
+                    return api('GET', 'InviteAdmin/Libraries');
+                }).then(function (res) {
+                    allLibraries = (res && res.libraries) || [];
+                    renderLibraries();
+                }, function () {
+                    $('LibraryList').innerHTML = '<div class="fieldDescription">Could not load servers. Save your connection settings and press Test connection.</div>';
+                });
+            }
+
+            function renderLibraries() {
+                var serverId = parseInt($('ServerId').value, 10);
+                var libs = allLibraries.filter(function (l) { return l.server_id === serverId; });
+                $('LibraryList').innerHTML = libs.length
+                    ? libs.map(function (l) {
+                        return '<label><input type="checkbox" class="wz-lib" value="' + esc(l.id) + '" /> ' + esc(l.name) + '</label>';
+                    }).join('')
+                    : '<div class="fieldDescription">No libraries found for this server.</div>';
+            }
+
+            function loadInvites() {
+                return api('GET', 'InviteAdmin/Invitations').then(function (res) {
+                    invites = (res && res.invitations) || [];
+                    renderInvites();
+                }, function (err) {
+                    errorText(err, 'Could not load invites.').then(function (msg) {
+                        $('InviteTable').innerHTML = '<p class="fieldDescription">' + esc(msg) + '</p>';
+                    });
+                });
+            }
+
+            function renderInvites() {
+                var showAll = $('ShowAll').checked;
+                var list = invites.filter(function (i) { return showAll || i.status === 'pending'; });
+                list.sort(function (a, b) { return String(b.created).localeCompare(String(a.created)); });
+                if (!list.length) {
+                    $('InviteTable').innerHTML = '<p class="fieldDescription">No invites to show.</p>';
+                    return;
+                }
+                var base = shareBase();
+                var rows = list.map(function (i) {
+                    var link = base + encodeURIComponent(i.code);
+                    var expires = i.expires ? new Date(i.expires).toLocaleString() : 'Never';
+                    var access = i.unlimited || i.duration === 'unlimited' ? 'Unlimited' : (esc(i.duration) + ' days');
+                    return '<tr>' +
+                        '<td><strong>' + esc(i.code) + '</strong></td>' +
+                        '<td class="wz-status-' + esc(i.status) + '">' + esc(i.status) + (i.used_by ? ' (' + esc(i.used_by) + ')' : '') + '</td>' +
+                        '<td>' + esc(expires) + '</td>' +
+                        '<td>' + access + '</td>' +
+                        '<td><input class="wz-link" readonly value="' + esc(link) + '" /></td>' +
+                        '<td style="white-space:nowrap">' +
+                        '<button is="emby-button" type="button" class="raised emby-button wz-row-btn" data-copy="' + esc(link) + '">Copy</button>' +
+                        '<button is="emby-button" type="button" class="raised emby-button wz-row-btn" data-delete="' + esc(i.id) + '" data-code="' + esc(i.code) + '">Delete</button>' +
+                        '</td></tr>';
+                }).join('');
+                $('InviteTable').innerHTML = '<table class="wz-table"><thead><tr><th>Code</th><th>Status</th><th>Link expires</th><th>Access</th><th>Share link</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>';
+            }
+
+            function copyText(text, input, btn) {
+                function done() {
+                    btn.textContent = 'Copied!';
+                    setTimeout(function () { btn.textContent = 'Copy'; }, 1500);
+                }
+                if (navigator.clipboard && window.isSecureContext) {
+                    navigator.clipboard.writeText(text).then(done);
+                } else if (input) {
+                    input.focus();
+                    input.select();
+                    try { if (document.execCommand('copy')) { done(); } } catch (e) { /* text stays selected for manual copy */ }
+                }
+            }
+
+            page.addEventListener('pageshow', function () {
+                loadConfig().then(function () {
+                    loadServers();
+                    loadInvites();
+                });
+            });
+
+            $('ServerId').addEventListener('change', renderLibraries);
+            $('ShowAll').addEventListener('change', renderInvites);
+            $('RefreshBtn').addEventListener('click', loadInvites);
+
+            $('WizarrConfigForm').addEventListener('submit', function (e) {
+                e.preventDefault();
+                Dashboard.showLoadingMsg();
+                ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+                    config.WizarrInternalUrl = $('WizarrInternalUrl').value.trim();
+                    config.JellyfinPublicUrl = $('JellyfinPublicUrl').value.trim();
+                    var newKey = $('ApiKey').value.trim();
+                    if ($('ClearApiKey').checked) { config.ApiKey = ''; }
+                    else if (newKey) { config.ApiKey = newKey; }
+                    var sid = parseInt($('ServerId').value, 10);
+                    if (!isNaN(sid)) { config.DefaultServerId = sid; }
+                    return ApiClient.updatePluginConfiguration(pluginId, config);
+                }).then(function (result) {
+                    Dashboard.processPluginConfigurationUpdateResult(result);
+                    return loadConfig();
+                }).then(function () {
+                    loadServers();
+                    loadInvites();
+                }, function () { Dashboard.hideLoadingMsg(); });
+                return false;
+            });
+
+            $('TestBtn').addEventListener('click', function () {
+                $('TestMsg').textContent = 'Testing…';
+                api('GET', 'InviteAdmin/Status').then(function (res) {
+                    var bits = ['Connected to Wizarr.'];
+                    if (res && res.users !== undefined) { bits.push(res.users + ' users'); }
+                    if (res && res.pending !== undefined) { bits.push(res.pending + ' pending invites'); }
+                    $('TestMsg').textContent = bits.join(' ');
+                }, function (err) {
+                    errorText(err, 'Connection failed. Save first, then check the URL and API key.').then(function (msg) {
+                        $('TestMsg').textContent = msg;
+                    });
+                });
+            });
+
+            $('WizarrCreateForm').addEventListener('submit', function (e) {
+                e.preventDefault();
+                var serverId = parseInt($('ServerId').value, 10);
+                if (isNaN(serverId)) {
+                    $('CreateMsg').textContent = 'Pick a Wizarr server first.';
+                    return false;
+                }
+                var days = parseInt($('DurationDays').value, 10);
+                var expires = parseInt($('ExpiresIn').value, 10);
+                var libs = Array.prototype.map.call(page.querySelectorAll('.wz-lib:checked'), function (c) { return parseInt(c.value, 10); });
+                var body = {
+                    server_ids: [serverId],
+                    duration: isNaN(days) ? 'unlimited' : String(days),
+                    unlimited: isNaN(days),
+                    library_ids: libs,
+                    allow_downloads: $('AllowDownloads').checked,
+                    allow_live_tv: $('AllowLiveTv').checked
+                };
+                if (!isNaN(expires)) { body.expires_in_days = expires; }
+
+                $('CreateMsg').textContent = 'Creating…';
+                api('POST', 'InviteAdmin/Invitations', body).then(function (res) {
+                    var code = res && res.invitation && res.invitation.code;
+                    var link = code ? shareBase() + encodeURIComponent(code) : '';
+                    $('CreateMsg').innerHTML = code
+                        ? 'Invite created: <input class="wz-link" readonly value="' + esc(link) + '" />'
+                        : 'Invite created.';
+                    loadInvites();
+                }, function (err) {
+                    errorText(err, 'Could not create the invite.').then(function (msg) {
+                        $('CreateMsg').textContent = msg;
+                    });
+                });
+                return false;
+            });
+
+            $('InviteTable').addEventListener('click', function (e) {
+                var btn = e.target.closest('button');
+                if (!btn) { return; }
+                if (btn.hasAttribute('data-copy')) {
+                    copyText(btn.getAttribute('data-copy'), btn.closest('tr').querySelector('.wz-link'), btn);
+                } else if (btn.hasAttribute('data-delete')) {
+                    var id = btn.getAttribute('data-delete');
+                    var code = btn.getAttribute('data-code');
+                    if (!window.confirm('Delete invite ' + code + '?')) { return; }
+                    ApiClient.ajax({ type: 'DELETE', url: ApiClient.getUrl('InviteAdmin/Invitations/' + id) })
+                        .then(loadInvites, loadInvites);
+                }
+            });
+        })();
+    </script>
+</div>
+</body>
+</html>
