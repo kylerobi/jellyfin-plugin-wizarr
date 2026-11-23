@@ -1,8 +1,10 @@
 using Jellyfin.Plugin.Wizarr.Configuration;
 using MediaBrowser.Common.Configuration;
+using MediaBrowser.Controller.Configuration;
 using MediaBrowser.Common.Plugins;
 using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Serialization;
+using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.Wizarr;
 
@@ -13,9 +15,18 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 {
     public const string PluginGuid = "0cd6f4b8-dc11-478f-b7e9-0d10cd1aeee9";
 
-    public Plugin(IApplicationPaths applicationPaths, IXmlSerializer xmlSerializer)
+    private readonly IServerConfigurationManager _serverConfig;
+    private readonly ILogger<Plugin> _logger;
+
+    public Plugin(
+        IApplicationPaths applicationPaths,
+        IXmlSerializer xmlSerializer,
+        IServerConfigurationManager serverConfig,
+        ILogger<Plugin> logger)
         : base(applicationPaths, xmlSerializer)
     {
+        _serverConfig = serverConfig;
+        _logger = logger;
         Instance = this;
     }
 
@@ -53,7 +64,13 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
         }
 
         base.UpdateConfiguration(configuration);
+        ApplyLoginLink();
     }
+
+    /// <summary>
+    /// Adds, updates or removes the invite link in Jellyfin's login disclaimer to match the settings.
+    /// </summary>
+    internal void ApplyLoginLink() => LoginLink.Apply(_serverConfig, Configuration, _logger);
 
     public IEnumerable<PluginPageInfo> GetPages()
     {

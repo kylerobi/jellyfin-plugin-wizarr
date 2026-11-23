@@ -49,6 +49,17 @@ public class PluginConfiguration : BasePluginConfiguration
     public bool ClearApiKey { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether the plugin adds an invite link to Jellyfin's login screen
+    /// (in the login disclaimer, between its own markers).
+    /// </summary>
+    public bool ShowLoginLink { get; set; }
+
+    /// <summary>
+    /// Gets or sets the text of the login-screen link. Blank = "Have an invite code? Join here".
+    /// </summary>
+    public string LoginLinkText { get; set; } = string.Empty;
+
+    /// <summary>
     /// Gets or sets the Wizarr server id preselected when creating invites.
     /// </summary>
     public int DefaultServerId { get; set; }

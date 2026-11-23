@@ -42,6 +42,15 @@
                     <input is="emby-checkbox" type="checkbox" id="ClearApiKey" />
                     <span>Remove the saved API key</span>
                 </label>
+                <h3 class="checkboxListLabel">Login screen</h3>
+                <label class="checkboxContainer">
+                    <input is="emby-checkbox" type="checkbox" id="ShowLoginLink" />
+                    <span>Show an invite link on the Jellyfin login screen</span>
+                </label>
+                <div class="inputContainer">
+                    <input is="emby-input" type="text" id="LoginLinkText" maxlength="200" label="Link text" />
+                    <div class="fieldDescription">Leave blank for "Have an invite code? Join here". The link is added to Dashboard → General → Branding → Login disclaimer, between markers the plugin manages; anything else you wrote there is kept. Untick this before uninstalling the plugin to remove the link.</div>
+                </div>
                 <div>
                     <button is="emby-button" type="submit" class="raised button-submit block emby-button"><span>Save</span></button>
                     <button is="emby-button" type="button" id="TestBtn" class="raised block emby-button"><span>Test connection</span></button>
@@ -141,6 +150,8 @@
                     $('WizarrInternalUrl').value = config.WizarrInternalUrl || '';
                     $('JellyfinPublicUrl').value = config.JellyfinPublicUrl || '';
                     $('InvitePublicUrl').value = config.InvitePublicUrl || '';
+                    $('ShowLoginLink').checked = !!config.ShowLoginLink;
+                    $('LoginLinkText').value = config.LoginLinkText || '';
                     $('ApiKey').value = '';
                     $('ApiKey').setAttribute('placeholder', config.HasApiKey ? '•••••••• (saved)' : '');
                     $('ClearApiKey').checked = false;
@@ -248,6 +259,8 @@
                     config.WizarrInternalUrl = $('WizarrInternalUrl').value.trim();
                     config.JellyfinPublicUrl = $('JellyfinPublicUrl').value.trim();
                     config.InvitePublicUrl = $('InvitePublicUrl').value.trim();
+                    config.ShowLoginLink = $('ShowLoginLink').checked;
+                    config.LoginLinkText = $('LoginLinkText').value.trim();
                     // The saved key is never sent to the browser; these write-only fields tell the server what to change.
                     config.NewApiKey = $('ApiKey').value.trim();
                     config.ClearApiKey = $('ClearApiKey').checked;

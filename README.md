@@ -159,13 +159,22 @@ server {
 
 ## 5. (Optional) Link it from the Jellyfin login screen
 
-Dashboard → General → Branding → **Login disclaimer** accepts HTML:
+In the plugin settings, tick **Show an invite link on the Jellyfin login screen** and press **Save**. You can change the link text; it defaults to "Have an invite code? Join here".
+
+The plugin adds the link to Dashboard → General → Branding → **Login disclaimer**, between two markers:
 
 ```html
+<!-- wizarr-invites:start (managed by the Wizarr Invites plugin) -->
 <a href="/invite" style="color:#00a4dc">Have an invite code? Join here</a>
+<!-- wizarr-invites:end -->
 ```
 
-If Jellyfin uses a base URL (e.g. `/jellyfin`), use `/jellyfin/invite`.
+- Anything else in the login disclaimer is left alone. Edit your own text outside the markers.
+- The link points at the separate invite address when one is set, otherwise at `/invite` on whatever address the login page is opened on. It includes Jellyfin's base URL (e.g. `/jellyfin/invite`) automatically.
+- The link is refreshed whenever you save the plugin settings and each time Jellyfin starts. If you delete it by hand while the box is ticked, it comes back on the next restart. Untick the box to remove it for good.
+- **Before uninstalling the plugin**, untick the box and save. Otherwise the link stays on the login screen, pointing at a page that no longer exists.
+
+To add the link by hand instead, leave the box unticked and paste the `<a ...>` line above into the login disclaimer yourself.
 
 ## Endpoints
 
