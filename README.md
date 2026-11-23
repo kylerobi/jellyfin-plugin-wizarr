@@ -47,46 +47,54 @@ In Wizarr's admin UI (reached from your LAN, or temporarily through an SSH tunne
 2. Set that server's **External URL** to your public Jellyfin address, so the sign-up wizard shows new users the right address.
 3. Create an API key under **Settings → API Keys**.
 
-## 2. Get the plugin
+## 2. Install the plugin
 
-**Download:** grab `wizarr-invites_x.y.z.0.zip` from the [Releases](../../releases) page. Every push also builds a zip, which you can find under the **Actions** tab → latest run → *Artifacts*.
+### Recommended: from the plugin repository
 
-To publish a new release, push a version tag:
+1. In Jellyfin, open **Dashboard → Plugins → Repositories** (on older versions: **Plugins → Repositories** tab), click **+**, and add:
+   - Name: `Wizarr Invites`
+   - URL: `https://raw.githubusercontent.com/kylerobi/jellyfin-plugin-wizarr/main/manifest.json`
+2. Open the plugin **Catalog**, find **Wizarr Invites** (under *General*), and install it.
+3. Restart Jellyfin.
+
+Updates then show up in the catalog like any other plugin's, and Jellyfin can install them automatically. Jellyfin checks each download against the checksum in the manifest before installing it.
+
+If you installed the plugin by hand before, delete the old `WizarrInvites_*` folder from Jellyfin's `plugins` folder first, so there's only one copy.
+
+### By hand
+
+Download `wizarr-invites_x.y.z.0.zip` from the [Releases](../../releases) page. The zip contains just the DLL, so unzip it into its own folder:
 
 ```sh
-git tag v1.0.1 && git push origin v1.0.1
+unzip wizarr-invites_1.0.1.0.zip -d "/path/to/jellyfin/config/plugins/Wizarr Invites_1.0.1.0"
+docker restart jellyfin
 ```
 
-**Or build it yourself**, which needs only Docker:
+Keep only one copy of the plugin in the `plugins` folder. Delete the old folder when you upgrade.
+
+### Build it yourself
+
+This needs only Docker:
 
 ```sh
 ./build.sh
 ```
 
-This produces `dist/Jellyfin.Plugin.Wizarr.dll`.
+This produces `dist/Jellyfin.Plugin.Wizarr.dll`. Copy it into a new folder under `plugins` (e.g. `Wizarr Invites_1.0.0.0`) and restart Jellyfin. Every push also builds a zip, which you can find under the **Actions** tab → latest run → *Artifacts*.
 
-Targets **Jellyfin 10.11** (.NET 9). For 10.10, edit the `.csproj`: change `net9.0` to `net8.0` and change `10.11.*` to `10.10.*`. Then rebuild with the `sdk:8.0` image in `build.sh`.
+Targets **Jellyfin 10.11** (.NET 9). For 10.10, edit the `.csproj`: change `net9.0` to `net8.0` and change `10.11.*` to `10.10.*`. Then rebuild with the `sdk:8.0` image in `build.sh`. The plugin repository only offers 10.11 builds.
 
-## 3. Install
+### Publishing a release (maintainers)
 
-From a release zip (it already contains the `WizarrInvites_x.y.z.0` folder):
-
-```sh
-unzip wizarr-invites_*.zip -d /path/to/jellyfin/config/plugins/
-docker restart jellyfin
-```
-
-From your own build:
+Push a version tag from `main`:
 
 ```sh
-mkdir -p /path/to/jellyfin/config/plugins/WizarrInvites_1.0.0.0
-cp dist/Jellyfin.Plugin.Wizarr.dll /path/to/jellyfin/config/plugins/WizarrInvites_1.0.0.0/
-docker restart jellyfin
+git tag v1.0.1 && git push origin v1.0.1
 ```
 
-Keep only one `WizarrInvites_*` folder. Delete the old one when you upgrade.
+The workflow builds the zip, publishes a GitHub release, then adds the version to `manifest.json` and commits it to `main`. Jellyfin servers using the repository see the update on their next catalog refresh. Tags must look like `v1.2.3`. If `main` has branch protection that blocks pushes, allow GitHub Actions to push or the manifest step will fail.
 
-## 4. Configure
+## 3. Configure
 
 Dashboard → Plugins → **Wizarr Invites**:
 
@@ -157,15 +165,24 @@ server {
 - `https://invite.example.com/` returns 404.
 - `https://jellyfin.example.com/invite` returns 404 and names the invite address.
 
-## 5. (Optional) Link it from the Jellyfin login screen
+## 4. (Optional) Link it from the Jellyfin login screen
 
-Dashboard → General → Branding → **Login disclaimer** accepts HTML:
+In the plugin settings, tick **Show an invite link on the Jellyfin login screen** and press **Save**. You can change the link text; it defaults to "Have an invite code? Join here".
+
+The plugin adds the link to Dashboard → General → Branding → **Login disclaimer**, between two markers:
 
 ```html
+<!-- wizarr-invites:start (managed by the Wizarr Invites plugin) -->
 <a href="/invite" style="color:#00a4dc">Have an invite code? Join here</a>
+<!-- wizarr-invites:end -->
 ```
 
-If Jellyfin uses a base URL (e.g. `/jellyfin`), use `/jellyfin/invite`.
+- Anything else in the login disclaimer is left alone. Edit your own text outside the markers.
+- The link points at the separate invite address when one is set, otherwise at `/invite` on whatever address the login page is opened on. It includes Jellyfin's base URL (e.g. `/jellyfin/invite`) automatically.
+- The link is refreshed whenever you save the plugin settings and each time Jellyfin starts. If you delete it by hand while the box is ticked, it comes back on the next restart. Untick the box to remove it for good.
+- **Before uninstalling the plugin**, untick the box and save. Otherwise the link stays on the login screen, pointing at a page that no longer exists.
+
+To add the link by hand instead, leave the box unticked and paste the `<a ...>` line above into the login disclaimer yourself.
 
 ## Endpoints
 
@@ -190,10 +207,34 @@ The saved API key is never sent to the browser; the dashboard only sees whether 
 
 Jellyfin login tokens are never forwarded to Wizarr.
 
+## Security: what this adds to your attack surface
+
+**Compared with exposing Wizarr directly, it's smaller.** The usual setup puts all of Wizarr on the internet: its admin login, first-run setup, settings and API. With this plugin none of those are reachable from outside, only the pages an invitee needs.
+
+**Compared with having no public invites at all, it adds a bounded amount:**
+
+- **Wizarr's invitee pages are public.** The code-entry page, invite links, sign-up wizard, password reset, and the poster and image endpoints can be reached by anyone. A bug in those parts of Wizarr is reachable from the internet. Invite codes can be guessed at; Wizarr rate-limits attempts per IP, and the plugin passes the real visitor IP through.
+- **Plugin code runs inside Jellyfin.** The proxy's path checks, header and cookie handling and link rewriting run in Jellyfin's process, so a bug there is a bug in Jellyfin's internet-facing surface. The plugin keeps this small: only an allowlist of paths and response headers gets through.
+- **Anonymous visitors can make Jellyfin do work.** Each `/invite` request opens a connection to Wizarr. The plugin doesn't cap how many there can be or the size of a sign-up upload; Jellyfin's default 30 MB request limit and a 30-second timeout apply. That's a way to put load on the server, not a way in.
+- **Shared browser origin.** By default, invite pages run on the same browser origin as the Jellyfin web app, where users' logins are stored. A [separate invite address](#recommended-a-separate-invite-address) removes this.
+- **Jellyfin holds a Wizarr API key.** If Jellyfin is compromised, the attacker can also manage Wizarr: create invites and see invite and user details.
+
+The admin endpoints (`/InviteAdmin/*`) need a Jellyfin admin login. The login-screen link only edits text in Jellyfin's branding settings, so neither adds meaningful exposure.
+
+**In short:** if Wizarr used to be reachable from the internet, this is a clear improvement. If it wasn't, you're adding Wizarr's invitee pages plus a small proxy, which is the minimum any public invite flow needs.
+
+**To keep exposure low:**
+
+- Use a [separate invite address](#recommended-a-separate-invite-address), and let your reverse proxy pass only `/invite` on it.
+- Supply the API key with the `WIZARR_API_KEY` environment variable instead of saving it in the plugin, so it isn't stored in Jellyfin's config files.
+- Keep Wizarr on a private Docker network with no public port, and keep both Wizarr and this plugin up to date.
+- Delete unused invites, and give invite links an expiry.
+
 ## Troubleshooting
 
 - **"The invite service is unavailable"**: Jellyfin can't reach Wizarr. Check that both containers share a network: `docker exec jellyfin curl -s http://wizarr:5690/health`.
 - **Pages load without styling, or links jump to `/wizard` without `/invite`**: `TRUST_PROXY_HEADERS=true` is missing on the Wizarr container.
 - **Clicking "Sign in"/"Admin" on a Wizarr page gives 404**: this is expected. Admin pages are blocked from the internet on purpose.
-- **401 in the dashboard page**: the API key is wrong or was deleted.
-- **Plugin doesn't appear**: check the Jellyfin logs. Usually this means the build doesn't match your Jellyfin version (see Build).
+- **"Wizarr rejected the API key" in the dashboard page**: the API key is wrong or was deleted.
+- **Plugin doesn't appear in the catalog**: check the repository URL in Dashboard → Plugins → Repositories, and that at least one release has been published.
+- **Plugin doesn't appear**: check the Jellyfin logs. Usually this means the build doesn't match your Jellyfin version (see [Build it yourself](#build-it-yourself)).

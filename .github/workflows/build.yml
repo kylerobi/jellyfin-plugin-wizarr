@@ -53,15 +53,16 @@ jobs:
           -p:AssemblyVersion="$VERSION"
           -p:FileVersion="$VERSION"
 
+      # The DLL sits at the top of the zip: Jellyfin's plugin installer extracts it into its own folder.
       - name: Package
         shell: bash
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          mkdir -p "package/WizarrInvites_${VERSION}"
-          cp dist/Jellyfin.Plugin.Wizarr.dll "package/WizarrInvites_${VERSION}/"
-          (cd package && zip -r "../wizarr-invites_${VERSION}.zip" .)
-          ls -la dist package
+          mkdir -p package
+          cp dist/Jellyfin.Plugin.Wizarr.dll package/
+          (cd package && zip -X "../wizarr-invites_${VERSION}.zip" Jellyfin.Plugin.Wizarr.dll)
+          unzip -l "wizarr-invites_${VERSION}.zip"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -79,8 +80,14 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # only this job can publish releases
+      contents: write   # only this job can publish releases and update manifest.json
+    env:
+      TARGET_ABI: "10.11.0.0"   # keep in step with the Jellyfin.Controller version in the .csproj
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: release-zip
@@ -89,3 +96,25 @@ jobs:
         with:
           files: wizarr-invites_${{ needs.build.outputs.version }}.zip
           generate_release_notes: true
+
+      # Adds this release to the plugin repository manifest that Jellyfin reads
+      # (Dashboard -> Plugins -> Repositories) and commits it to main.
+      - name: Update manifest.json
+        shell: bash
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          zip="wizarr-invites_${VERSION}.zip"
+          python3 -I scripts/update_manifest.py manifest.json \
+            --version "$VERSION" \
+            --zip "$zip" \
+            --url "https://github.com/${REPO}/releases/download/${TAG}/${zip}" \
+            --target-abi "$TARGET_ABI" \
+            --changelog "See https://github.com/${REPO}/releases/tag/${TAG}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add manifest.json
+          git commit -m "manifest: add ${VERSION}"
+          git push origin HEAD:main
