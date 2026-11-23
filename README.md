@@ -8,7 +8,7 @@ Internet ──► Jellyfin (/invite/...) ──► private Docker network ─�
 
 - **Invite links:** `https://jellyfin.example.com/invite/j/ABC123`
 - **Code entry page:** `https://jellyfin.example.com/invite`
-- **Dashboard page:** Dashboard → Plugins → **Wizarr Invites**, where you can create, list, copy and delete invites.
+- **Dashboard page:** **Wizarr Invites** in the dashboard's left-hand menu (also under Dashboard → Plugins), where you can create, list, copy and delete invites.
 
 Jellyfin only passes through Wizarr's invitee pages: the code page, the `/j/` links, the sign-up wizard, password reset and static files. Wizarr's admin panel, login, setup, settings and API are **not** reachable through `/invite`. Every other path returns 404. The dashboard page uses Wizarr's API from inside Jellyfin, and only Jellyfin admins can use it.
 
@@ -96,7 +96,7 @@ The workflow builds the zip, publishes a GitHub release, then adds the version t
 
 ## 3. Configure
 
-Dashboard → Plugins → **Wizarr Invites**:
+Open **Wizarr Invites** in the dashboard's left-hand menu (or Dashboard → Plugins → **Wizarr Invites**):
 
 | Setting | Example |
 |---|---|

@@ -79,7 +79,11 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
             new PluginPageInfo
             {
                 Name = Name,
-                EmbeddedResourcePath = $"{GetType().Namespace}.Configuration.configPage.html"
+                DisplayName = "Wizarr Invites",
+                EmbeddedResourcePath = $"{GetType().Namespace}.Configuration.configPage.html",
+                // Also list the page in the dashboard's left-hand menu, not only under Plugins.
+                EnableInMainMenu = true,
+                MenuIcon = "person_add"
             }
         };
     }
