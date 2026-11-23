@@ -108,6 +108,55 @@ To isolate them, point a second hostname (e.g. `invite.example.com`) at the same
 - Your reverse proxy must pass the original `Host` header to Jellyfin (nginx: `proxy_set_header Host $host;`; Caddy and Traefik do this by default).
 - Don't sign in to Jellyfin on the invite address. The isolation comes from no Jellyfin logins being stored for that origin.
 
+The invite hostname must be reachable from the internet, just like your Jellyfin address, because invitees open it from outside. It only adds a second name for the same Jellyfin server: Wizarr still has no public port, and if ports 80/443 already reach your reverse proxy you don't need a new port-forward. You do need a DNS record and an HTTPS certificate for the new name.
+
+Leave your existing Jellyfin proxy entry unchanged. Once the setting is saved, the plugin returns 404 for `/invite` on the main address. For the invite hostname, it's best to pass only `/invite` through and return 404 for everything else, so nobody can open the Jellyfin login page there. The examples below assume Jellyfin has no base URL. If it uses one (e.g. `/jellyfin`), use `/jellyfin/invite` instead of `/invite`.
+
+#### Nginx Proxy Manager
+
+Add a **new Proxy Host** for the invite hostname:
+
+1. **Details:** Domain Names `invite.example.com`, Scheme `http`, Forward Hostname/IP the same as your Jellyfin proxy host (e.g. `jellyfin`), Forward Port `8096`. Turn on **Block Common Exploits**. Websockets Support isn't needed.
+2. **SSL:** request a new Let's Encrypt certificate and turn on **Force SSL**.
+3. **Advanced:** paste the following, which returns 404 for anything outside `/invite`:
+   ```nginx
+   location ~ ^/(?!invite(/|$)) {
+       return 404;
+   }
+   ```
+   Don't add a `location / { ... }` block here. Nginx Proxy Manager already generates one, and a second one stops nginx loading the config. With a base URL, use `^/(?!jellyfin/invite(/|$))`.
+
+Nginx Proxy Manager already passes the original `Host` header, so there's nothing else to set.
+
+#### Plain nginx
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name invite.example.com;
+    # ssl_certificate / ssl_certificate_key ...
+
+    location /invite {
+        proxy_pass http://jellyfin:8096;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location / {
+        return 404;
+    }
+}
+```
+
+`proxy_set_header Host $host;` is required. Without it the plugin can't recognise the invite hostname and returns 404.
+
+#### Check it
+
+- `https://invite.example.com/invite` shows Wizarr's "enter invite code" page.
+- `https://invite.example.com/` returns 404.
+- `https://jellyfin.example.com/invite` returns 404 and names the invite address.
+
 ## 5. (Optional) Link it from the Jellyfin login screen
 
 Dashboard → General → Branding → **Login disclaimer** accepts HTML:
