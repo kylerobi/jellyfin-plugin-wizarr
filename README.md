@@ -199,6 +199,29 @@ The saved API key is never sent to the browser; the dashboard only sees whether 
 
 Jellyfin login tokens are never forwarded to Wizarr.
 
+## Security: what this adds to your attack surface
+
+**Compared with exposing Wizarr directly, it's smaller.** The usual setup puts all of Wizarr on the internet: its admin login, first-run setup, settings and API. With this plugin none of those are reachable from outside, only the pages an invitee needs.
+
+**Compared with having no public invites at all, it adds a bounded amount:**
+
+- **Wizarr's invitee pages are public.** The code-entry page, invite links, sign-up wizard, password reset, and the poster and image endpoints can be reached by anyone. A bug in those parts of Wizarr is reachable from the internet. Invite codes can be guessed at; Wizarr rate-limits attempts per IP, and the plugin passes the real visitor IP through.
+- **Plugin code runs inside Jellyfin.** The proxy's path checks, header and cookie handling and link rewriting run in Jellyfin's process, so a bug there is a bug in Jellyfin's internet-facing surface. The plugin keeps this small: only an allowlist of paths and response headers gets through.
+- **Anonymous visitors can make Jellyfin do work.** Each `/invite` request opens a connection to Wizarr. The plugin doesn't cap how many there can be or the size of a sign-up upload; Jellyfin's default 30 MB request limit and a 30-second timeout apply. That's a way to put load on the server, not a way in.
+- **Shared browser origin.** By default, invite pages run on the same browser origin as the Jellyfin web app, where users' logins are stored. A [separate invite address](#recommended-a-separate-invite-address) removes this.
+- **Jellyfin holds a Wizarr API key.** If Jellyfin is compromised, the attacker can also manage Wizarr: create invites and see invite and user details.
+
+The admin endpoints (`/InviteAdmin/*`) need a Jellyfin admin login. The login-screen link only edits text in Jellyfin's branding settings, so neither adds meaningful exposure.
+
+**In short:** if Wizarr used to be reachable from the internet, this is a clear improvement. If it wasn't, you're adding Wizarr's invitee pages plus a small proxy, which is the minimum any public invite flow needs.
+
+**To keep exposure low:**
+
+- Use a [separate invite address](#recommended-a-separate-invite-address), and let your reverse proxy pass only `/invite` on it.
+- Supply the API key with the `WIZARR_API_KEY` environment variable instead of saving it in the plugin, so it isn't stored in Jellyfin's config files.
+- Keep Wizarr on a private Docker network with no public port, and keep both Wizarr and this plugin up to date.
+- Delete unused invites, and give invite links an expiry.
+
 ## Troubleshooting
 
 - **"The invite service is unavailable"**: Jellyfin can't reach Wizarr. Check that both containers share a network: `docker exec jellyfin curl -s http://wizarr:5690/health`.
