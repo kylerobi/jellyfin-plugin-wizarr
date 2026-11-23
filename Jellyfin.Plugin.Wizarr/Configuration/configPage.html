@@ -31,8 +31,12 @@
                     <div class="fieldDescription">Used to build share links, e.g. https://jellyfin.example.com. Leave blank to use the address you're on now.</div>
                 </div>
                 <div class="inputContainer">
+                    <input is="emby-input" type="url" id="InvitePublicUrl" label="Separate invite address (optional, recommended)" />
+                    <div class="fieldDescription">e.g. https://invite.example.com, a second hostname that points at this same Jellyfin server. When set, invite pages are only served on that address, so Wizarr's pages never share a browser origin with your Jellyfin logins. Don't sign in to Jellyfin on this address.</div>
+                </div>
+                <div class="inputContainer">
                     <input is="emby-input" type="password" id="ApiKey" label="Wizarr API key" autocomplete="new-password" />
-                    <div class="fieldDescription" id="ApiKeyHint">Create one in Wizarr under Settings → API Keys. Leave blank to keep the saved key, or to use the WIZARR_API_KEY environment variable on the Jellyfin container.</div>
+                    <div class="fieldDescription" id="ApiKeyHint">Create one in Wizarr under Settings → API Keys. Leave blank to keep the saved key. Recommended: leave it unsaved and set the WIZARR_API_KEY environment variable on the Jellyfin container instead, so the key isn't stored in Jellyfin's config files.</div>
                 </div>
                 <label class="checkboxContainer">
                     <input is="emby-checkbox" type="checkbox" id="ClearApiKey" />
@@ -122,7 +126,7 @@
             }
 
             function publicRoot() {
-                var base = (currentConfig && currentConfig.JellyfinPublicUrl) || '';
+                var base = (currentConfig && (currentConfig.InvitePublicUrl || currentConfig.JellyfinPublicUrl)) || '';
                 return base ? base.replace(/\/+$/, '') + '/invite' : ApiClient.getUrl('invite');
             }
 
@@ -136,8 +140,9 @@
                     currentConfig = config;
                     $('WizarrInternalUrl').value = config.WizarrInternalUrl || '';
                     $('JellyfinPublicUrl').value = config.JellyfinPublicUrl || '';
+                    $('InvitePublicUrl').value = config.InvitePublicUrl || '';
                     $('ApiKey').value = '';
-                    $('ApiKey').setAttribute('placeholder', config.ApiKey ? '•••••••• (saved)' : '');
+                    $('ApiKey').setAttribute('placeholder', config.HasApiKey ? '•••••••• (saved)' : '');
                     $('ClearApiKey').checked = false;
                     $('JoinUrlHint').textContent = publicRoot();
                     Dashboard.hideLoadingMsg();
@@ -242,9 +247,10 @@
                 ApiClient.getPluginConfiguration(pluginId).then(function (config) {
                     config.WizarrInternalUrl = $('WizarrInternalUrl').value.trim();
                     config.JellyfinPublicUrl = $('JellyfinPublicUrl').value.trim();
-                    var newKey = $('ApiKey').value.trim();
-                    if ($('ClearApiKey').checked) { config.ApiKey = ''; }
-                    else if (newKey) { config.ApiKey = newKey; }
+                    config.InvitePublicUrl = $('InvitePublicUrl').value.trim();
+                    // The saved key is never sent to the browser; these write-only fields tell the server what to change.
+                    config.NewApiKey = $('ApiKey').value.trim();
+                    config.ClearApiKey = $('ClearApiKey').checked;
                     var sid = parseInt($('ServerId').value, 10);
                     if (!isNaN(sid)) { config.DefaultServerId = sid; }
                     return ApiClient.updatePluginConfiguration(pluginId, config);

@@ -94,9 +94,68 @@ Dashboard → Plugins → **Wizarr Invites**:
 |---|---|
 | Wizarr internal URL | `http://wizarr:5690` |
 | Jellyfin public URL (optional) | `https://jellyfin.example.com`, used for share links |
-| Wizarr API key | from Wizarr → Settings → API Keys (or leave blank and use `WIZARR_API_KEY`) |
+| Separate invite address (optional, recommended) | `https://invite.example.com`, see below |
+| Wizarr API key | from Wizarr → Settings → API Keys. **Recommended:** leave blank and set `WIZARR_API_KEY` on the Jellyfin container, so the key isn't stored in Jellyfin's config files |
 
 Press **Save**, then **Test connection**. Then open `https://jellyfin.example.com/invite` from outside your network to check the code page.
+
+### Recommended: a separate invite address
+
+By default Wizarr's pages are served on your Jellyfin address, so they share a browser origin with the Jellyfin web app, which keeps users' logins in browser storage. A bug in Wizarr's public pages could then reach those logins.
+
+To isolate them, point a second hostname (e.g. `invite.example.com`) at the same Jellyfin server and enter it as **Separate invite address**. The plugin then serves `/invite` only on that hostname (other hosts get a 404 that names the right address), share links use it, and Wizarr builds its links from it.
+
+- Your reverse proxy must pass the original `Host` header to Jellyfin (nginx: `proxy_set_header Host $host;`; Caddy and Traefik do this by default).
+- Don't sign in to Jellyfin on the invite address. The isolation comes from no Jellyfin logins being stored for that origin.
+
+The invite hostname must be reachable from the internet, just like your Jellyfin address, because invitees open it from outside. It only adds a second name for the same Jellyfin server: Wizarr still has no public port, and if ports 80/443 already reach your reverse proxy you don't need a new port-forward. You do need a DNS record and an HTTPS certificate for the new name.
+
+Leave your existing Jellyfin proxy entry unchanged. Once the setting is saved, the plugin returns 404 for `/invite` on the main address. For the invite hostname, it's best to pass only `/invite` through and return 404 for everything else, so nobody can open the Jellyfin login page there. The examples below assume Jellyfin has no base URL. If it uses one (e.g. `/jellyfin`), use `/jellyfin/invite` instead of `/invite`.
+
+#### Nginx Proxy Manager
+
+Add a **new Proxy Host** for the invite hostname:
+
+1. **Details:** Domain Names `invite.example.com`, Scheme `http`, Forward Hostname/IP the same as your Jellyfin proxy host (e.g. `jellyfin`), Forward Port `8096`. Turn on **Block Common Exploits**. Websockets Support isn't needed.
+2. **SSL:** request a new Let's Encrypt certificate and turn on **Force SSL**.
+3. **Advanced:** paste the following, which returns 404 for anything outside `/invite`:
+   ```nginx
+   location ~ ^/(?!invite(/|$)) {
+       return 404;
+   }
+   ```
+   Don't add a `location / { ... }` block here. Nginx Proxy Manager already generates one, and a second one stops nginx loading the config. With a base URL, use `^/(?!jellyfin/invite(/|$))`.
+
+Nginx Proxy Manager already passes the original `Host` header, so there's nothing else to set.
+
+#### Plain nginx
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name invite.example.com;
+    # ssl_certificate / ssl_certificate_key ...
+
+    location /invite {
+        proxy_pass http://jellyfin:8096;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location / {
+        return 404;
+    }
+}
+```
+
+`proxy_set_header Host $host;` is required. Without it the plugin can't recognise the invite hostname and returns 404.
+
+#### Check it
+
+- `https://invite.example.com/invite` shows Wizarr's "enter invite code" page.
+- `https://invite.example.com/` returns 404.
+- `https://jellyfin.example.com/invite` returns 404 and names the invite address.
 
 ## 5. (Optional) Link it from the Jellyfin login screen
 
@@ -120,10 +179,14 @@ If Jellyfin uses a base URL (e.g. `/jellyfin`), use `/jellyfin/invite`.
 
 ## How it works
 
-Jellyfin forwards each allowed request to Wizarr and adds `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Forwarded-For` and `X-Forwarded-Prefix: /invite` headers. With `TRUST_PROXY_HEADERS=true`, Wizarr then builds all its links under `/invite` and rate-limits by the visitor's real IP. As a safety net, the plugin also:
+Jellyfin forwards each allowed request to Wizarr and adds `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Forwarded-For` and `X-Forwarded-Prefix: /invite` headers. The host and scheme come from the configured invite or Jellyfin public address when one is set, not from the visitor's `Host` header. With `TRUST_PROXY_HEADERS=true`, Wizarr then builds all its links under `/invite` and rate-limits by the visitor's real IP. As a safety net, the plugin also:
 - rewrites any root-relative links Wizarr hard-codes,
 - rewrites redirect `Location` headers,
-- scopes Wizarr's cookies to `/invite`.
+- scopes Wizarr's cookies to `/invite` and renames them with a `wizarr-` prefix; only those cookies are sent back to Wizarr, so cookies set by other apps on your domain never reach it,
+- passes only an approved list of Wizarr's response headers (so Wizarr can't set HSTS, CORS or `Clear-Site-Data` on your Jellyfin address), and adds `X-Content-Type-Options: nosniff` and `Referrer-Policy: same-origin` if Wizarr doesn't,
+- refuses paths with percent-encoding, `.`/`..` segments or empty segments, and blocks Wizarr's admin-only `/wizard/bundle-preview`.
+
+The saved API key is never sent to the browser; the dashboard only sees whether one is saved.
 
 Jellyfin login tokens are never forwarded to Wizarr.
 

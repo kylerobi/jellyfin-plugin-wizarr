@@ -62,6 +62,13 @@ public class InviteAdminController : ControllerBase
         try
         {
             using var response = await WizarrConnection.Http.SendAsync(request, ct).ConfigureAwait(false);
+            // A 401/403 passed straight through would make the Jellyfin web app think the admin's own
+            // session expired and log them out, so report Wizarr auth failures as a bad gateway instead.
+            if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
+            {
+                return Error(StatusCodes.Status502BadGateway, "Wizarr rejected the API key. Check it under Wizarr → Settings → API Keys.");
+            }
+
             var text = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             return new ContentResult
             {

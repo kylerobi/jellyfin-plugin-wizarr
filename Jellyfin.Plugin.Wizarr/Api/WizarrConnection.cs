@@ -39,6 +39,23 @@ internal static class WizarrConnection
             : null;
     }
 
+    /// <summary>
+    /// Parses an admin-entered public address (scheme + host, optional path). Returns null if blank or invalid.
+    /// </summary>
+    internal static Uri? PublicUri(string? url)
+    {
+        url = url?.Trim();
+        if (string.IsNullOrEmpty(url))
+        {
+            return null;
+        }
+
+        return Uri.TryCreate(url, UriKind.Absolute, out var uri)
+               && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
+            ? uri
+            : null;
+    }
+
     internal static string? ApiKey()
     {
         var cfg = Config;
