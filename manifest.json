@@ -1,0 +1,11 @@
+[
+  {
+    "guid": "0cd6f4b8-dc11-478f-b7e9-0d10cd1aeee9",
+    "name": "Wizarr Invites",
+    "description": "Serves Wizarr's invite sign-up at /invite on your Jellyfin address and manages invites from the dashboard.",
+    "overview": "Invite people to Jellyfin through Wizarr without exposing Wizarr to the internet.",
+    "owner": "kylerobi",
+    "category": "General",
+    "versions": []
+  }
+]
