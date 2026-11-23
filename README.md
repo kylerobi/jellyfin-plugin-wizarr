@@ -86,13 +86,19 @@ Targets **Jellyfin 10.11** (.NET 9). For 10.10, edit the `.csproj`: change `net9
 
 ### Publishing a release (maintainers)
 
-Push a version tag from `main`:
+Merge your changes into `main` first, and let the merge finish. Then either create a release on GitHub (**Releases → Draft a new release**, a new tag such as `v1.0.3`, target `main`, **Publish release**) or push a tag from the latest `main`:
 
 ```sh
-git tag v1.0.1 && git push origin v1.0.1
+git checkout main && git pull
+git tag v1.0.3 && git push origin v1.0.3
 ```
 
-The workflow builds the zip, publishes a GitHub release, then adds the version to `manifest.json` and commits it to `main`. Jellyfin servers using the repository see the update on their next catalog refresh. Tags must look like `v1.2.3`. If `main` has branch protection that blocks pushes, allow GitHub Actions to push or the manifest step will fail.
+The workflow builds the zip, attaches it to the release, checks the download, then adds the version to `manifest.json` and commits it to `main`. Jellyfin servers using the repository see the update on their next catalog refresh.
+
+- Tags must look like `v1.2.3`, and each release needs a new version number.
+- The tag must be the latest commit on `main`. If it isn't (for example, it was created just before a merge), the release job stops without touching the manifest. Delete that release and its tag, then create it again.
+- Don't delete and recreate a release after the workflow has run: the zip is attached to the release that existed at the time, and a recreated release has no zip. If that happens, release a new version instead.
+- If `main` has branch protection that blocks pushes, allow GitHub Actions to push or the manifest step will fail.
 
 ## 3. Configure
 
