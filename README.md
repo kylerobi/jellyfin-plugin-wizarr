@@ -3,7 +3,7 @@
 Serves Wizarr's invite sign-up through Jellyfin, so **Wizarr never has to be exposed to the internet**.
 
 ```
-Internet ──► Jellyfin (/invite/...) ──private Docker network──► Wizarr
+Internet ──► Jellyfin (/invite/...) ──► private Docker network ──► Wizarr
 ```
 
 - **Invite links:** `https://jellyfin.example.com/invite/j/ABC123`
