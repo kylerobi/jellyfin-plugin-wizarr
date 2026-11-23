@@ -8,6 +8,14 @@
     "category": "General",
     "versions": [
       {
+        "version": "1.0.3.0",
+        "changelog": "See https://github.com/kylerobi/jellyfin-plugin-wizarr/releases/tag/v1.0.3",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/kylerobi/jellyfin-plugin-wizarr/releases/download/v1.0.3/wizarr-invites_1.0.3.0.zip",
+        "checksum": "4face4520f0915a7906fbae3f2aa1c0c",
+        "timestamp": "2026-11-23T23:49:05Z"
+      },
+      {
         "version": "1.0.1.0",
         "changelog": "See https://github.com/kylerobi/jellyfin-plugin-wizarr/releases/tag/v1.0.1",
         "targetAbi": "10.11.0.0",
