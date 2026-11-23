@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 
@@ -58,9 +59,12 @@ public partial class InviteProxyController : ControllerBase
         _logger = logger;
     }
 
+    // No action parameters on purpose: any parameter (even a CancellationToken) makes MVC run model binding,
+    // which reads a form POST body before we can forward it, so Wizarr would receive an empty sign-up form.
     [AcceptVerbs("GET", "HEAD", "POST", Route = "{**path}")]
-    public async Task Proxy(CancellationToken cancellationToken)
+    public async Task Proxy()
     {
+        var cancellationToken = HttpContext.RequestAborted;
         var encodedPath = Request.Path.ToUriComponent();      // e.g. /invite/j/ABC123 (relative to Jellyfin's base URL)
         var pathBase = Request.PathBase.ToUriComponent().TrimEnd('/');
         var prefix = pathBase + Segment;                      // e.g. /invite or /jellyfin/invite
@@ -205,7 +209,15 @@ public partial class InviteProxyController : ControllerBase
 
         var hasBody = Request.ContentLength > 0
                       || (Request.ContentLength is null && HttpMethods.IsPost(Request.Method));
-        if (hasBody)
+        var parsedForm = HttpContext.Features.Get<IFormFeature>()?.Form;
+        if (hasBody && parsedForm is not null && Request.HasFormContentType
+            && Request.ContentType!.StartsWith("application/x-www-form-urlencoded", StringComparison.OrdinalIgnoreCase))
+        {
+            // Something already read the form, so the raw body is gone: rebuild it from the parsed fields.
+            request.Content = new FormUrlEncodedContent(
+                parsedForm.SelectMany(f => f.Value.Select(v => new KeyValuePair<string, string>(f.Key, v ?? string.Empty))));
+        }
+        else if (hasBody)
         {
             request.Content = new StreamContent(Request.Body);
             if (!string.IsNullOrEmpty(Request.ContentType))
